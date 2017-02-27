@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<!--###############################################################################
+##
+##  Copyright (c) Crossbar.io Technologies GmbH and/or collaborators. All rights reserved.
+## 
+##  Redistribution and use in source and binary forms, with or without
+##  modification, are permitted provided that the following conditions are met:
+## 
+##  1. Redistributions of source code must retain the above copyright notice,
+##     this list of conditions and the following disclaimer.
+## 
+##  2. Redistributions in binary form must reproduce the above copyright notice,
+##     this list of conditions and the following disclaimer in the documentation
+##     and/or other materials provided with the distribution.
+## 
+##  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+##  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+##  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+##  ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+##  LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+##  CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+##  SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+##  INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+##  CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+##  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+##  POSSIBILITY OF SUCH DAMAGE.
+##
+###############################################################################
+-->
+
+<html>
+<style>
+   #vis-3d{
+        height: 100vh;
+        width: 100vw;
+        position:fixed;
+        top:0;
+        left:0;
+    }
+
+</style>
+   <body>
+     <div id="vis-3d" style="height:100vh;"> </div>
+      <script>AUTOBAHN_DEBUG = false;</script>
+      <script src="http://autobahn.s3.amazonaws.com/autobahnjs/latest/autobahn.min.jgz"></script>
+
+        <script type='text/javascript' src="https://d3js.org/d3.v3.min.js"></script>
+        <script type='text/javascript' src="/lib/js/three/Detector.js"></script>
+        <script type='text/javascript' src="/lib/js/three/three.js"></script>
+        <script type='text/javascript' src="/lib/js/three/math/Lut.js"></script>
+        <script type="text/javascript" src="/lib/js/three/libs/TrackballControls.js"></script>
+        <script src='https://rawgit.com/mrdoob/three.js/master/examples/js/effects/StereoEffect.js'></script>
+
+        <script src="https://raw.githubusercontent.com/mrdoob/three.js/master/examples/js/controls/DeviceOrientationControls.js"></script>
+        <script src="http://threejs.org/examples/js/controls/OrbitControls.js"></script>
+
+      <script type='text/javascript' src="/lib/js/mesh3d_stereo.js"></script>
+      <script>
+         // the URL of the locally hosted FFBO WAMP Router (Crossbar.io)
+         //
+
+        // Create the canvas which we will draw our neurons on
+        var ffbomesh = new FFBOMesh3D('vis-3d', {}, {"globalCenter": {'x': 0, 'y':-250, 'z':0}});
+
+
+         var wsuri;
+         wsuri = "ws://127.0.0.1:8080/ws";
+
+         // the WAMP connection to the Router
+         //
+         var connection = new autobahn.Connection({
+            url: wsuri,
+            realm: "realm1"
+         });
+
+
+
+         // fired when connection is established and session attached
+         //
+         connection.onopen = function (session, details) {
+            
+            // Store updating server list
+            var server_list = {};
+
+            console.log("Connected");
+
+            // CALL a remote procedure every second
+            // Ask Processor for the latest connected server lists.
+            
+           session.call('ffbo.processor.server_information', []).then(
+              function (res) {
+                 // store new server_list
+                 server_list = res;
+                 console.log("server_information result:", res);
+                
+                // retrieve ID of the nlp server we want to query
+                var query_result = nlp_query(session,server_list,na_query);
+                
+                //var na_server_id = Object.keys(server_list['na'])[0]
+                //var morphology_result = na_query(session,na_server_id,query_result)
+
+              },
+              function (err) {
+                 console.log("server_information error:", err);
+              }
+           );
+
+
+            // SUBSCRIBE to a topic and receive events
+            // 
+            function on_update (args) {
+               server_list = args[0];
+               console.log("on_update() event received with message " +  message);
+            }
+
+            session.subscribe('ffbo.server.update', on_update).then(
+               function (sub) {
+                  console.log('subscribed to topic');
+               },
+               function (err) {
+                  console.log('failed to subscribe to topic', err);
+               }
+            );
+
+         };
+
+
+         // fired when connection was lost (or could not be established)
+         //
+         connection.onclose = function (reason, details) {
+            console.log("Connection lost: " + reason);
+         }
+
+        // define a function to retrieve the neuron
+        function nlp_query(session,server_list,callback){
+           
+            console.log(server_list['nlp'])
+ 
+            var nlp_server_id = Object.keys(server_list['nlp'])[0]
+            var query = "Show L1 neurons in the Lamina"
+
+            // Create channel
+            var channel = 'ffbo.nlp.query.' + nlp_server_id;
+            var query_result = {}
+
+            session.call(channel, [query]).then(
+                function (res) {
+                 console.log("query_result:", res);
+                 query_result = res;
+                console.log(typeof callback);
+                     if (typeof callback === "function") {
+                        var na_server_id = Object.keys(server_list['na'])[0]
+                        // Call it, since we have confirmed it is callable​
+                        callback(session,na_server_id,query_result);
+                    }    
+                },
+                function (err) {
+                 console.log("query error:", err);
+                }
+            );
+
+                       
+//}
+            //return query_result;
+        }
+
+        // define a function to retrieve morphologies, given a query
+        function na_query(session,server_id,query){
+            // Create channel
+            var channel = 'ffbo.na.query.' + server_id;
+            var query_result = {}
+
+            console.log(Object.keys(query));
+
+            session.call(channel, [query]).then(
+                function (res) {
+                    //console.log("Final neuroarch queryresult:", res);
+                    // Draw the result
+                    data = {'ffbo_json': res,
+				                    'type': 'morphology_json'};
+                     ffbomesh.addJson(data)
+			         
+                  },
+                function (err) {
+                    console.log("neuroarch query error:", err);
+                        
+                },
+                function (progress) {
+                    //console.log("Progress:", progress);
+                    data = {'ffbo_json': res,
+				                    'type': 'morphology_json'};
+                    ffbomesh.addJson(data);
+                }
+            );
+
+            return query_result;
+        }
+
+
+
+        // now actually open the connection
+        //
+        connection.open();
+
+      </script>
+
+   </body>
+</html>
